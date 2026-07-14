@@ -187,4 +187,4 @@ Run the notebook cells from top to bottom.
 
 ## License
 
-This project is intended for educational and portfolio purposes. Add a license file before allowing reuse or redistribution.
+This project is open-source and protected under the MIT license
