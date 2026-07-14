@@ -1,196 +1,206 @@
-# Turbo.az — Used Car Price Prediction
+# Turbo.az Car Price Prediction
 
-An end-to-end regression project on **50,800 used-car listings scraped from [turbo.az](https://turbo.az)**, Azerbaijan's largest automotive marketplace. The goal is to predict a listing's price in AZN from its specifications, and — just as importantly — to establish *which* attributes actually drive price in the Azerbaijani used-car market.
+A machine learning project for predicting used-car prices from listings collected from **[turbo.az](https://turbo.az)**. The project covers data cleaning, preprocessing, categorical encoding, Random Forest regression, model evaluation, and grouped feature-importance analysis.
 
-This repository documents the full pipeline: raw-data cleaning, multi-currency normalisation, high-cardinality categorical handling, feature engineering, model training, and feature-importance analysis.
+## Project Overview
 
-> **Status: work in progress.** The Random Forest baseline is complete. Gradient boosting, cross-validation, and a full model comparison are in progress — see [Roadmap](#roadmap).
+The goal of this project is to build a regression model that estimates a vehicle's price using characteristics such as:
 
----
+- Brand and model
+- Manufacturing year
+- Body type
+- Engine volume
+- Horsepower
+- Fuel type
+- Transmission and drivetrain
+- Vehicle condition
+- Number of seats and owners
+- Equipment and comfort features
+- Credit and barter availability
 
-## Overview
+The original dataset contains **50,833 listings and 22 columns**.
 
-Used-car pricing is a classic tabular regression problem, but the turbo.az data brings three complications that make it a genuine engineering exercise rather than a `.fit()` call:
+## Dataset
 
-**1. Prices are quoted in three currencies.** Sellers list in AZN, USD, or EUR. Any model trained on the raw `Price` column would be learning the seller's currency choice as much as the car's value. All prices are normalised to AZN before anything else happens.
+Source: [`vrashad/turbo_az`](https://huggingface.co/datasets/vrashad/turbo_az) — turbo.az car listings, Parquet, licensed CC BY-NC-4.0.
 
-**2. The `Model` column has ~1,700 levels.** This is a long-tail categorical: the top 50 models cover 58% of listings, the top 200 cover 83%, and the remaining ~1,500 models share the last 17% — most with fewer than five listings each. No model can learn a reliable price estimate from three examples.
+Main columns include:
 
-**3. Optional equipment arrives as a delimited string.** The `Supply` column packs a car's entire feature set into one field:
-
+```text
+Band, Model, Year, Ban type, Color, Engine volume, Horsepower,
+Fuel type, Box, Gear, Is new, Seats count, Owners count,
+Condition, Supply, Credit, Barter, Price, Currency
 ```
-Yüngül lehimli disklər;ABS;Lyuk;Yağış sensoru;Kondisioner;Dəri salon;...
+
+> The dataset itself may not be included in the repository if it is too large or restricted. Update this section with the dataset source when publishing it.
+
+## Data Preprocessing
+
+The preprocessing workflow includes:
+
+1. Removing an invalid listing with the year `1904`
+2. Converting seat and owner counts to numeric values
+3. Replacing values such as `8+` and `4 və daha çox`
+4. Filling missing numerical values with the median
+5. Filling missing categorical values with the mode
+6. Converting USD and EUR prices to AZN
+7. Removing unused text and metadata columns
+8. Removing duplicate rows
+9. Keeping the 200 most frequent car models
+10. One-hot encoding categorical columns
+11. Multi-hot encoding the semicolon-separated `Supply` column
+12. Converting Yes/No columns into binary values
+
+After preprocessing, the dataset contains approximately:
+
+```text
+42,010 rows
+306 features
 ```
 
-Treated as a category, this produces thousands of unique combinations with a count of one. It is not a category — it is a **set**, and it has to be encoded as one.
+## Model
 
----
+The project currently uses a:
 
-## Data
+```text
+RandomForestRegressor
+```
 
-| | |
-|---|---|
-| **Source** | turbo.az listings (scraped) |
-| **Raw size** | 50,800 rows |
-| **Target** | `Price_AZN` — listing price normalised to Azerbaijani manat |
-| **Format** | Parquet (`turbo_df.parquet`) |
-
-**Feature columns used**
-
-| Feature | Type | Notes |
-|---|---|---|
-| `Year` | numeric | Manufacture year — the dominant predictor |
-| `Engine` | numeric | Displacement |
-| `Model`, `Band` | categorical | Nested: model is determined by band (make) |
-| `Ban type`, `Color`, `Fuel type`, `Box`, `Gear`, `Condition` | categorical | Low-cardinality |
-| `Seats count`, `Owners count` | numeric | Arrive as strings — see cleaning below |
-| `Is new`, `Credit`, `Barter` | binary | Yes/No → 1/0 |
-| `Supply` | multi-label | Semicolon-delimited equipment set |
-
-Dropped: `Link`, `Classified Date`, `Description`, `Currency`, `Price`, `rate` — either identifiers, free text, or intermediate columns that would leak the target.
-
----
-
-## Preprocessing
-
-### Currency normalisation
-
-Prices are converted to a single unit before modelling:
+Main configuration:
 
 ```python
-rates = {"AZN": 1.0, "USD": 1.70, "EUR": 1.95}
-df["rate"] = df["Currency"].map(rates)
-df["Price_AZN"] = df["Price"] * df["rate"]
+RandomForestRegressor(
+    n_estimators=300,
+    n_jobs=-1
+)
 ```
 
-Both `Price` and `Currency` are then dropped — retaining either would leak the target back into the feature matrix.
+The data is divided into:
 
-### Type coercion
+- 80% training data
+- 20% testing data
+- `random_state=42`
 
-Two numeric columns arrive as strings because of open-ended top categories:
+## Model Performance
 
-- `Seats count` contains `"8+"` → mapped to `8`
-- `Owners count` contains `"4 və daha çox"` ("4 or more") → mapped to `4`
+Current model results:
 
-Both are then passed through `pd.to_numeric(errors="coerce")`, which converts any remaining unparseable value to `NaN` rather than raising — making failures visible instead of silent. Residual missing values are filled with the column median; categorical columns (`Condition`, `Supply`) with the mode.
+| Metric | Training Set | Test Set |
+|---|---:|---:|
+| R² Score | 0.9951 | 0.9667 |
+| RMSE | 2,264.68 AZN | 6,208.03 AZN |
 
-### Long-tail categorical handling
+The test R² score indicates that the model explains approximately **96.67% of the variance** in car prices on the test set.
 
-The `Model` column is truncated to its **200 most frequent levels**, retaining ~83% of rows. This guarantees every surviving model has enough listings (~25+) to support a price estimate, at the cost of discarding the exotic tail. This is a deliberate trade-off — see [Limitations](#limitations).
+> The difference between training and test performance suggests some overfitting, although the model still performs strongly on unseen data.
 
-### Multi-label encoding
+## Feature Importance
 
-`Supply` is expanded into a multi-hot matrix — one binary column per distinct equipment token — rather than being treated as a categorical:
-
-```python
-supply_encoded = df["Supply"].str.get_dummies(sep=";").add_prefix("Supply_")
-```
-
-A car with 13 features gets 13 ones. This collapses thousands of junk combinations into ~13 clean, high-signal binary columns, each of which the model can actually split on.
-
-### Also applied
-
-- Invalid `Year == 1904` rows dropped (data-entry artefacts)
-- Duplicate rows removed
-- Remaining categoricals one-hot encoded with `drop_first=True`
-
----
-
-## Results
-
-**Random Forest** — 300 estimators, default depth, 80/20 split.
-
-| Metric | Train | Test |
-|---|---|---|
-| R² | *TBD* | *TBD* |
-| RMSE (AZN) | *TBD* | *TBD* |
-
-*(Fill these in from your notebook output before pushing.)*
-
-The train-vs-test gap is reported deliberately: a Random Forest with unbounded depth will fit the training set nearly perfectly, and the size of that gap is the honest measure of how much of the score is memorisation.
-
-### Feature importance
-
-Because one-hot encoding shatters a single conceptual feature across dozens of columns (`Model` becomes 199 separate binary features), raw `feature_importances_` is misleading — the importance of "model" is scattered and each fragment looks trivial. Importances are therefore **regrouped back to their source feature** before plotting:
-
-```python
-def original_feature_name(col):
-    prefixes = ["Model_", "Band_", "Ban type_", "Color_",
-                "Fuel type_", "Box_", "Gear_", "Condition_", "Supply_"]
-    for prefix in prefixes:
-        if col.startswith(prefix):
-            return prefix.rstrip("_")
-    return col
-```
-
-Each group's importances are summed, giving a readable ranking of *which attributes matter*, rather than *which one-hot column matters*.
+The one-hot encoded features are grouped back into their original categories so that the overall importance of groups such as `Model`, `Band`, `Color`, and `Fuel type` can be interpreted more clearly.
 
 ![Grouped feature importance](figures/feature_importance.png)
 
----
+To save the plot in the correct location, create an `images` folder and use:
+
+```python
+import os
+
+os.makedirs("images", exist_ok=True)
+
+plt.tight_layout()
+plt.savefig(
+    "images/feature_importance.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+plt.show()
+```
 
 ## Repository Structure
 
-```
-.
-├── turbo_price_prediction.ipynb   # Main notebook: cleaning → features → model → importance
-├── turbo_df.parquet               # Raw scraped listings
-├── figures/
-│   └── feature_importance.png     # Grouped RF feature importance
+```text
+Turbo_az_Car_Price_Prediction/
+│
+├── data_preprocessing.ipynb
 ├── requirements.txt
-└── README.md
+├── README.md
+│
+└── figures/
+    └── feature_importance.png
 ```
 
----
+## Installation
 
-## Requirements
+Clone the repository:
 
+```bash
+git clone https://github.com/Yunis-Allahverdi/Turbo_az_Car_Price_Prediction.git
+cd Turbo_az_Car_Price_Prediction
 ```
-pip install pandas numpy scikit-learn matplotlib pyarrow
+
+Install the required libraries:
+
+```bash
+pip install -r requirements.txt
 ```
 
-Tested with Python 3.10+.
+Example `requirements.txt`:
 
----
+```text
+pandas
+numpy
+scikit-learn
+matplotlib
+pyarrow
+jupyter
+```
 
-## How to Reproduce
+## Usage
 
-1. Place `turbo_df.parquet` in the repository root.
-2. Open `turbo_price_prediction.ipynb` in Jupyter / VS Code / Colab.
-3. Run all cells top-to-bottom. Each section prints its own shapes and diagnostics.
+Start Jupyter Notebook:
 
----
+```bash
+jupyter notebook
+```
 
-## Limitations
+Then open:
 
-Stated plainly, because a result without its caveats is not a result:
+```text
+data_preprocessing.ipynb
+```
 
-- **No mileage feature.** Mileage is the second-strongest predictor of used-car price after year, and it is absent from this dataset. The ceiling on achievable accuracy is correspondingly lower than a production pricing model would reach.
-- **Exchange rates are hardcoded.** `USD = 1.70`, `EUR = 1.95` are approximations, not the CBAR rate on each listing's date. Since the manat is effectively pegged to the dollar, the USD error is small; the EUR error is not.
-- **The exotic tail is discarded.** Filtering to the top 200 models removes ~17% of rows — and those rows are *not* a random sample. They are disproportionately the rare, expensive, high-variance listings. Reported error is therefore representative of the mainstream Baku market, not of the market as a whole.
-- **Single train/test split.** One 80/20 split produces one number with real variance in it. Fold-to-fold spread is not yet quantified.
-- **Target is not log-transformed.** Car prices are heavily right-skewed; RMSE on the raw AZN scale is dominated by the most expensive listings.
-- **One-hot encoding is suboptimal for tree models.** A tree splitting on a sparse binary column can only ask *"is it a Camry?"*, never *"is it one of {Camry, Corolla, Prius}?"* — so groupings cost it enormous depth. Native categorical support (LightGBM / CatBoost) handles this in a single split.
+Run the notebook cells from top to bottom.
 
----
+## Technologies Used
 
-## Roadmap
+- Python
+- Pandas
+- NumPy
+- Scikit-learn
+- Matplotlib
+- Jupyter Notebook
+- Parquet / PyArrow
 
-- [x] Data cleaning and currency normalisation
-- [x] Multi-label `Supply` encoding
-- [x] Random Forest baseline + grouped feature importance
-- [ ] **Permutation importance** — sklearn's default impurity-based importance is [biased toward high-cardinality features](https://scikit-learn.org/stable/modules/permutation_importance.html), and `Model` has 200 levels. Permutation importance measures actual predictive contribution instead of split count.
-- [ ] Log-transform the target (`log1p` → predict → `expm1`)
-- [ ] Linear / Ridge baseline — the honest floor every other model must beat
-- [ ] XGBoost with early stopping
-- [ ] CatBoost / LightGBM with native categorical handling (no one-hot)
-- [ ] MLP baseline for comparison
-- [ ] K-fold cross-validation — replace the single split with a mean ± std
-- [ ] Final model comparison table: encoding × scaling × CV RMSE × fit time
-- [ ] Error analysis — inspect the 10 worst predictions and ask what they have in common
+## Possible Future Improvements
 
----
+- Compare Random Forest with XGBoost, LightGBM, and CatBoost
+- Tune hyperparameters using RandomizedSearchCV
+- Apply cross-validation
+- Investigate and reduce model overfitting
+- Add MAE and MAPE evaluation metrics
+- Handle rare brands and models without discarding as many listings
+- Build a reusable preprocessing pipeline
+- Save the trained model with Joblib
+- Create a Streamlit web application for price prediction
+- Add SHAP-based model explanations
+- Add automated tests and a prediction script
+
+## Author
+
+**Yunis Allahverdi**
+
+- GitHub: [Yunis-Allahverdi](https://github.com/Yunis-Allahverdi)
 
 ## License
 
-MIT
+This project is intended for educational and portfolio purposes. Add a license file before allowing reuse or redistribution.
