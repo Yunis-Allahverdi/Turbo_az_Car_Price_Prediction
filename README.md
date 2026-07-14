@@ -98,23 +98,7 @@ The test R² score indicates that the model explains approximately **96.67% of t
 
 The one-hot encoded features are grouped back into their original categories so that the overall importance of groups such as `Model`, `Band`, `Color`, and `Fuel type` can be interpreted more clearly.
 
-![Grouped feature importance](figures/feature_importance.png)
-
-To save the plot in the correct location, create an `images` folder and use:
-
-```python
-import os
-
-os.makedirs("images", exist_ok=True)
-
-plt.tight_layout()
-plt.savefig(
-    "images/feature_importance.png",
-    dpi=300,
-    bbox_inches="tight"
-)
-plt.show()
-```
+![Grouped feature importance](figures/feat_importance.png)
 
 ## Repository Structure
 
